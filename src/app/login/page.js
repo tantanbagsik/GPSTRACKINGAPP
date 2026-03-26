@@ -48,7 +48,7 @@ export default function Login() {
     setUser(mockUser);
     setLoading(false);
     
-    setTimeout(() => router.push('/live-tracking'), 500);
+    setTimeout(() => router.push('/'), 500);
   };
 
   const handleLogout = () => {
@@ -78,10 +78,10 @@ export default function Login() {
           </button>
           <button 
             className="btn-primary" 
-            onClick={() => router.push('/live-tracking')}
+            onClick={() => router.push('/')}
             style={{ marginTop: '1rem' }}
           >
-            Go to Live Tracking
+            Go to Dashboard
           </button>
         </div>
       </main>
