@@ -3,14 +3,5 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "regions": ["hkg1", "sin1"],
-  "env": {
-    "NEXTAUTH_URL": "https://gptrackingapp.vercel.app"
-  },
-  "functions": {
-    "src/app/api/**/*.js": {
-      "maxDuration": 30
-    }
-  }
+  "outputDirectory": ".next"
 }

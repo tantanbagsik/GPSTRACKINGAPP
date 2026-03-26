@@ -47,3 +47,5 @@ mingw.7z
 
 # Vercel
 .vercel/
+
+.vercel
