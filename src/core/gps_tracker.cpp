@@ -4,10 +4,12 @@
 #include <chrono>
 #include <thread>
 #include <random>
+#include <cmath>
 #include <fstream>
 #include <mutex>
 #include <atomic>
-#include <sqlite3.h>
+#include <sstream>
+#include <iomanip>
 
 using namespace std;
 
@@ -17,6 +19,7 @@ struct GPSCoordinate {
     double longitude;
     double speed;
     double heading;
+    double altitude;
     long long timestamp;
     int vehicle_id;
 };
@@ -26,33 +29,76 @@ struct Vehicle {
     int id;
     string license_plate;
     string driver;
+    string type;
     bool gps_active;
     GPSCoordinate current_position;
     vector<GPSCoordinate> tracking_history;
+    double battery;
+    string signal_strength;
+};
+
+// Road pattern for realistic movement
+struct RoadPattern {
+    double start_lat;
+    double start_lon;
+    double end_lat;
+    double end_lon;
+    double speed_limit;
 };
 
 // GPS Tracker Class
 class GPSTracker {
 private:
-    sqlite3* db;
     vector<Vehicle> vehicles;
     mutex tracker_mutex;
     atomic<bool> tracking_active{false};
+    vector<RoadPattern> roads;
     
-    // Simulate GPS signal with realistic movement
+    // Initialize road patterns (Philippines roads)
+    void initRoadPatterns() {
+        roads = {
+            {14.5995, 120.9842, 14.6100, 120.9900, 60.0},  // EDSA
+            {14.5547, 121.0244, 14.5600, 121.0300, 80.0},  // C5
+            {14.5800, 120.9700, 14.5900, 120.9750, 40.0},  // Taft Ave
+            {14.6000, 120.9800, 14.6200, 121.0000, 100.0}, // NLEX
+            {14.5200, 121.0000, 14.5400, 121.0200, 60.0},  // SLEX
+        };
+    }
+    
+    // Get random road pattern
+    RoadPattern getRandomRoad() {
+        static random_device rd;
+        static mt19937 gen(rd());
+        uniform_int_distribution<> dis(0, roads.size() - 1);
+        return roads[dis(gen)];
+    }
+    
+    // Simulate realistic GPS movement along roads
     GPSCoordinate simulateGPSMovement(const GPSCoordinate& current, int vehicle_id) {
         static random_device rd;
         static mt19937 gen(rd());
-        static uniform_real_distribution<> lat_delta(-0.0005, 0.0005);
-        static uniform_real_distribution<> lon_delta(-0.0005, 0.0005);
-        static uniform_real_distribution<> speed_delta(0, 20);
-        static uniform_real_distribution<> heading_delta(0, 360);
+        static uniform_real_distribution<> noise(-0.0001, 0.0001);
+        static uniform_real_distribution<> speed_variation(-5.0, 5.0);
+        
+        RoadPattern road = getRandomRoad();
         
         GPSCoordinate updated;
-        updated.latitude = current.latitude + lat_delta(gen);
-        updated.longitude = current.longitude + lon_delta(gen);
-        updated.speed = speed_delta(gen);
-        updated.heading = heading_delta(gen);
+        double progress = (current.latitude - road.start_lat) / (road.end_lat - road.start_lat);
+        if (progress < 0 || progress > 1) progress = 0.5;
+        
+        // Interpolate along road
+        updated.latitude = road.start_lat + (road.end_lat - road.start_lat) * progress + noise(gen);
+        updated.longitude = road.start_lon + (road.end_lon - road.start_lon) * progress + noise(gen);
+        
+        // Speed based on road limit with variation
+        updated.speed = road.speed_limit + speed_variation(gen);
+        updated.speed = max(0.0, updated.speed);
+        
+        // Calculate heading from coordinates
+        updated.heading = atan2(road.end_lon - road.start_lon, road.end_lat - road.start_lat) * 180.0 / M_PI;
+        if (updated.heading < 0) updated.heading += 360.0;
+        
+        updated.altitude = 10.0 + noise(gen) * 100;
         updated.timestamp = chrono::duration_cast<chrono::milliseconds>(
             chrono::system_clock::now().time_since_epoch()
         ).count();
@@ -61,41 +107,31 @@ private:
         return updated;
     }
     
-    // Save tracking data to database
-    void saveTrackingData(const GPSCoordinate& gps) {
-        const string sql = "INSERT INTO gps_tracking (vehicle_id, latitude, longitude, speed, heading, timestamp) "
-                          "VALUES (?, ?, ?, ?, ?, ?);";
-        
-        sqlite3_stmt* stmt;
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_int(stmt, 1, gps.vehicle_id);
-            sqlite3_bind_double(stmt, 2, gps.latitude);
-            sqlite3_bind_double(stmt, 3, gps.longitude);
-            sqlite3_bind_double(stmt, 4, gps.speed);
-            sqlite3_bind_double(stmt, 5, gps.heading);
-            sqlite3_bind_longlong(stmt, 6, gps.timestamp);
-            sqlite3_step(stmt);
-            sqlite3_finalize(stmt);
-        }
-    }
-    
-    // Export tracking data to JSON for frontend
+    // Export tracking data to JSON
     void exportToJSON(const string& filename) {
         ofstream json_file(filename);
-        json_file << "{\n  \"vehicles\": [\n";
+        json_file << "{\n  \"timestamp\": " << chrono::duration_cast<chrono::milliseconds>(
+            chrono::system_clock::now().time_since_epoch()
+        ).count() << ",\n  \"vehicles\": [\n";
         
         lock_guard<mutex> lock(tracker_mutex);
         for (size_t i = 0; i < vehicles.size(); ++i) {
             const auto& v = vehicles[i];
+            if (!v.gps_active) continue;
+            
             json_file << "    {\n";
             json_file << "      \"id\": " << v.id << ",\n";
             json_file << "      \"license_plate\": \"" << v.license_plate << "\",\n";
             json_file << "      \"driver\": \"" << v.driver << "\",\n";
+            json_file << "      \"type\": \"" << v.type << "\",\n";
             json_file << "      \"gps_active\": " << (v.gps_active ? "true" : "false") << ",\n";
-            json_file << "      \"latitude\": " << v.current_position.latitude << ",\n";
-            json_file << "      \"longitude\": " << v.current_position.longitude << ",\n";
-            json_file << "      \"speed\": " << v.current_position.speed << ",\n";
-            json_file << "      \"heading\": " << v.current_position.heading << ",\n";
+            json_file << "      \"latitude\": " << fixed << setprecision(6) << v.current_position.latitude << ",\n";
+            json_file << "      \"longitude\": " << fixed << setprecision(6) << v.current_position.longitude << ",\n";
+            json_file << "      \"speed\": " << fixed << setprecision(1) << v.current_position.speed << ",\n";
+            json_file << "      \"heading\": " << fixed << setprecision(1) << v.current_position.heading << ",\n";
+            json_file << "      \"altitude\": " << fixed << setprecision(1) << v.current_position.altitude << ",\n";
+            json_file << "      \"battery\": " << fixed << setprecision(0) << v.battery << ",\n";
+            json_file << "      \"signal\": \"" << v.signal_strength << "\",\n";
             json_file << "      \"timestamp\": " << v.current_position.timestamp << "\n";
             json_file << "    }" << (i < vehicles.size() - 1 ? "," : "") << "\n";
         }
@@ -105,47 +141,22 @@ private:
     }
 
 public:
-    GPSTracker(const string& db_path = "tracking_data.db") {
-        if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK) {
-            cerr << "Database error: " << sqlite3_errmsg(db) << endl;
-            return;
-        }
-        
-        // Create GPS tracking table
-        const char* create_sql = 
-            "CREATE TABLE IF NOT EXISTS gps_tracking ("
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "vehicle_id INTEGER NOT NULL,"
-            "latitude REAL NOT NULL,"
-            "longitude REAL NOT NULL,"
-            "speed REAL,"
-            "heading REAL,"
-            "timestamp INTEGER,"
-            "FOREIGN KEY(vehicle_id) REFERENCES vehicles(id));";
-        
-        char* err_msg = nullptr;
-        sqlite3_exec(db, create_sql, nullptr, nullptr, &err_msg);
-        
-        // Load vehicles from database
-        loadVehicles();
+    GPSTracker() {
+        initRoadPatterns();
     }
     
-    void loadVehicles() {
-        const char* sql = "SELECT id, license_plate, driver FROM vehicles WHERE gps_enabled = 1;";
-        sqlite3_stmt* stmt;
-        
-        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                Vehicle v;
-                v.id = sqlite3_column_int(stmt, 0);
-                v.license_plate = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-                v.driver = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-                v.gps_active = false;
-                v.current_position = {14.5995, 120.9842, 0, 0, 0, v.id}; // Default: Manila
-                vehicles.push_back(v);
-            }
-            sqlite3_finalize(stmt);
-        }
+    void addVehicle(int id, const string& plate, const string& driver, const string& type) {
+        lock_guard<mutex> lock(tracker_mutex);
+        Vehicle v;
+        v.id = id;
+        v.license_plate = plate;
+        v.driver = driver;
+        v.type = type;
+        v.gps_active = false;
+        v.battery = 80.0 + (rand() % 20);
+        v.signal_strength = "Strong";
+        v.current_position = {14.5995, 120.9842, 0, 0, 10, 0, id};
+        vehicles.push_back(v);
     }
     
     void activateGPS(int vehicle_id) {
@@ -154,15 +165,6 @@ public:
             if (v.id == vehicle_id) {
                 v.gps_active = true;
                 cout << "[GPS] Activated for vehicle " << v.license_plate << endl;
-                
-                // Update database
-                const string update_sql = "UPDATE vehicles SET gps_enabled = 1, last_updated = CURRENT_TIMESTAMP WHERE id = ?;";
-                sqlite3_stmt* stmt;
-                if (sqlite3_prepare_v2(db, update_sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_int(stmt, 1, vehicle_id);
-                    sqlite3_step(stmt);
-                    sqlite3_finalize(stmt);
-                }
                 break;
             }
         }
@@ -174,20 +176,12 @@ public:
             if (v.id == vehicle_id) {
                 v.gps_active = false;
                 cout << "[GPS] Deactivated for vehicle " << v.license_plate << endl;
-                
-                const string update_sql = "UPDATE vehicles SET gps_enabled = 0, last_updated = CURRENT_TIMESTAMP WHERE id = ?;";
-                sqlite3_stmt* stmt;
-                if (sqlite3_prepare_v2(db, update_sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_int(stmt, 1, vehicle_id);
-                    sqlite3_step(stmt);
-                    sqlite3_finalize(stmt);
-                }
                 break;
             }
         }
     }
     
-    void startLiveTracking(int update_interval_ms = 5000) {
+    void startLiveTracking(int update_interval_ms = 2000) {
         tracking_active = true;
         cout << "[GPS] Live tracking started (interval: " << update_interval_ms << "ms)" << endl;
         
@@ -204,12 +198,15 @@ public:
                         v.tracking_history.erase(v.tracking_history.begin());
                     }
                     
-                    saveTrackingData(v.current_position);
+                    // Update battery
+                    v.battery -= 0.01;
+                    if (v.battery < 0) v.battery = 100;
                     
-                    cout << "[GPS] Vehicle " << v.license_plate 
-                         << " | Lat: " << v.current_position.latitude 
-                         << " | Lon: " << v.current_position.longitude
-                         << " | Speed: " << v.current_position.speed << " km/h" << endl;
+                    cout << "[GPS] " << v.license_plate 
+                         << " | Lat: " << fixed << setprecision(6) << v.current_position.latitude 
+                         << " | Lon: " << fixed << setprecision(6) << v.current_position.longitude
+                         << " | Speed: " << fixed << setprecision(1) << v.current_position.speed << " km/h"
+                         << " | Battery: " << fixed << setprecision(0) << v.battery << "%" << endl;
                 }
             }
             
@@ -233,27 +230,30 @@ public:
         }
         return active;
     }
-    
-    ~GPSTracker() {
-        if (db) sqlite3_close(db);
-    }
 };
 
-// Main function - GPS Tracking Service
+// Main function
 int main() {
     cout << "========================================" << endl;
-    cout << "  RP Motor Tracking - GPS Service" << endl;
+    cout << "  GPS Live Tracking System v2.0" << endl;
     cout << "========================================" << endl;
     
-    GPSTracker tracker("tracking_data.db");
+    GPSTracker tracker;
     
-    // Activate GPS for demo vehicles
+    // Add vehicles
+    tracker.addVehicle(1, "ABC-1234", "John Doe", "car");
+    tracker.addVehicle(2, "XYZ-5678", "Jane Smith", "truck");
+    tracker.addVehicle(3, "DEF-9012", "Mike Johnson", "motorcycle");
+    tracker.addVehicle(4, "GHI-3456", "Sarah Lee", "van");
+    tracker.addVehicle(5, "JKL-7890", "Tom Brown", "car");
+    
+    // Activate GPS for some vehicles
     tracker.activateGPS(1);
     tracker.activateGPS(2);
-    tracker.activateGPS(5);
+    tracker.activateGPS(4);
     
-    // Start live tracking (updates every 5 seconds)
-    tracker.startLiveTracking(5000);
+    // Start live tracking (updates every 2 seconds)
+    tracker.startLiveTracking(2000);
     
     return 0;
 }
