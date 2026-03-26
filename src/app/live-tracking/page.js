@@ -4,24 +4,35 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import '../globals.css';
 
+// Vehicle icons
+const VEHICLE_ICONS = {
+  car: '🚗',
+  truck: '🚚',
+  motorcycle: '🏍️',
+  van: '🚐',
+  bus: '🚌',
+};
+
 export default function LiveTracking() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [vehicles, setVehicles] = useState([
-    { id: 1, plate: 'ABC-1234', driver: 'John Doe', type: 'car', status: 'Active' },
-    { id: 2, plate: 'XYZ-5678', driver: 'Jane Smith', type: 'truck', status: 'Active' },
-    { id: 3, plate: 'DEF-9012', driver: 'Mike Johnson', type: 'motorcycle', status: 'Idle' },
-    { id: 4, plate: 'GHI-3456', driver: 'Sarah Lee', type: 'van', status: 'Active' },
-    { id: 5, plate: 'JKL-7890', driver: 'Tom Brown', type: 'car', status: 'Idle' },
+    { id: 1, plate: 'ABC-1234', driver: 'John Doe', type: 'car' },
+    { id: 2, plate: 'XYZ-5678', driver: 'Jane Smith', type: 'truck' },
+    { id: 3, plate: 'DEF-9012', driver: 'Mike Johnson', type: 'motorcycle' },
+    { id: 4, plate: 'GHI-3456', driver: 'Sarah Lee', type: 'van' },
+    { id: 5, plate: 'JKL-7890', driver: 'Tom Brown', type: 'car' },
   ]);
   const [gpsActive, setGpsActive] = useState({});
-  const [trackingData, setTrackingData] = useState([]);
+  const [trackingData, setTrackingData] = useState({});
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [apiKey, setApiKey] = useState('');
   const [isMobile, setIsMobile] = useState(false);
-  const [activeTab, setActiveTab] = useState('map');
-  const mapRef = useRef(null);
+  const [activeTab, setActiveTab] = useState('devices');
+  const mapCanvasRef = useRef(null);
+  const animationRef = useRef(null);
 
+  // Check if mobile
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
@@ -29,6 +40,7 @@ export default function LiveTracking() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Check authentication
   useEffect(() => {
     const savedApiKey = localStorage.getItem('rp_tracking_token');
     if (!savedApiKey) {
@@ -39,389 +51,502 @@ export default function LiveTracking() {
     setIsAuthenticated(true);
   }, [router]);
 
+  // Initialize GPS state
   useEffect(() => {
     if (!isAuthenticated) return;
-    const initialGps = {};
-    vehicles.forEach(v => { initialGps[v.id] = v.status === 'Active'; });
-    setGpsActive(initialGps);
+    const initial = {};
+    vehicles.forEach(v => { initial[v.id] = false; });
+    setGpsActive(initial);
   }, [isAuthenticated, vehicles]);
 
+  // Simulate GPS tracking data
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const interval = setInterval(() => {
-      const newData = Object.keys(gpsActive)
-        .filter(id => gpsActive[id])
-        .map(id => {
-          const vehicle = vehicles.find(v => v.id === parseInt(id));
-          const existing = trackingData.find(t => t.id === parseInt(id));
-          
+      const newData = { ...trackingData };
+      
+      Object.keys(gpsActive).forEach(id => {
+        if (gpsActive[id]) {
+          const existing = newData[id];
           const baseLat = existing?.latitude || (14.5995 + Math.random() * 0.05);
           const baseLon = existing?.longitude || (120.9842 + Math.random() * 0.05);
           const speed = existing?.speed || (Math.random() * 60);
-          const newSpeed = Math.max(0, speed + (Math.random() - 0.5) * 10);
           
-          return {
+          newData[id] = {
             id: parseInt(id),
-            license_plate: vehicle?.plate,
-            driver: vehicle?.driver,
-            type: vehicle?.type,
-            latitude: baseLat + (Math.random() - 0.5) * 0.002,
-            longitude: baseLon + (Math.random() - 0.5) * 0.002,
-            speed: newSpeed,
+            latitude: baseLat + (Math.random() - 0.5) * 0.001,
+            longitude: baseLon + (Math.random() - 0.5) * 0.001,
+            speed: Math.max(0, speed + (Math.random() - 0.5) * 10),
             heading: existing?.heading || (Math.random() * 360),
-            timestamp: Date.now(),
-            battery: Math.min(100, (existing?.battery || 80) + (Math.random() - 0.6) * 2),
+            battery: Math.max(0, Math.min(100, (existing?.battery || 85) + (Math.random() - 0.55) * 2)),
             signal: Math.random() > 0.1 ? 'Strong' : 'Weak',
             network: Math.random() > 0.2 ? '4G' : '3G',
+            lastUpdate: Date.now(),
+            accuracy: 5 + Math.random() * 10,
           };
-        });
+        }
+      });
+      
       setTrackingData(newData);
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, gpsActive, vehicles, trackingData]);
+  }, [isAuthenticated, gpsActive, trackingData]);
 
+  // Draw map
   useEffect(() => {
-    if (!mapRef.current || trackingData.length === 0) return;
+    if (!mapCanvasRef.current) return;
     
-    const canvas = mapRef.current;
+    const canvas = mapCanvasRef.current;
     const ctx = canvas.getContext('2d');
     const width = canvas.width;
     const height = canvas.height;
     
-    ctx.clearRect(0, 0, width, height);
-    
-    // Background
-    const bgGradient = ctx.createLinearGradient(0, 0, width, height);
-    bgGradient.addColorStop(0, '#0f172a');
-    bgGradient.addColorStop(1, '#1e293b');
-    ctx.fillStyle = bgGradient;
-    ctx.fillRect(0, 0, width, height);
-    
-    // Grid
-    ctx.strokeStyle = 'rgba(100, 116, 139, 0.15)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < width; i += 50) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, height);
-      ctx.stroke();
-    }
-    for (let i = 0; i < height; i += 50) {
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(width, i);
-      ctx.stroke();
-    }
-    
-    // Roads
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.moveTo(0, height/2);
-    ctx.lineTo(width, height/2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(width/2, 0);
-    ctx.lineTo(width/2, height);
-    ctx.stroke();
-    
-    // Diagonal roads
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(width, height);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(width, 0);
-    ctx.lineTo(0, height);
-    ctx.stroke();
-
-    // Vehicles
-    trackingData.forEach(vehicle => {
-      const x = 100 + ((vehicle.longitude - 120.9) * 2000) % (width - 150);
-      const y = 80 + ((vehicle.latitude - 14.5) * 2000) % (height - 120);
+    const drawMap = () => {
+      ctx.clearRect(0, 0, width, height);
       
-      // Pulse rings
-      if (vehicle.speed > 0) {
-        for (let i = 3; i >= 1; i--) {
-          ctx.beginPath();
-          ctx.fillStyle = `rgba(34, 197, 94, ${0.05 * i})`;
-          ctx.arc(x, y, 20 + i * 12 + Math.sin(Date.now()/400 + i) * 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+      // Background gradient
+      const bg = ctx.createLinearGradient(0, 0, width, height);
+      bg.addColorStop(0, '#0f172a');
+      bg.addColorStop(1, '#1e293b');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
       
-      // Shadow
-      ctx.beginPath();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.ellipse(x + 2, y + 16, 12, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Outer ring
-      ctx.beginPath();
-      ctx.strokeStyle = vehicle.speed > 0 ? 'rgba(74, 222, 128, 0.6)' : 'rgba(148, 163, 184, 0.4)';
-      ctx.lineWidth = 3;
-      ctx.arc(x, y, 16, 0, Math.PI * 2);
-      ctx.stroke();
-      
-      // Main dot
-      const dotGradient = ctx.createRadialGradient(x - 3, y - 3, 0, x, y, 12);
-      if (vehicle.speed > 0) {
-        dotGradient.addColorStop(0, '#86efac');
-        dotGradient.addColorStop(0.5, '#4ade80');
-        dotGradient.addColorStop(1, '#22c55e');
-      } else {
-        dotGradient.addColorStop(0, '#d1d5db');
-        dotGradient.addColorStop(0.5, '#9ca3af');
-        dotGradient.addColorStop(1, '#6b7280');
-      }
-      ctx.beginPath();
-      ctx.fillStyle = dotGradient;
-      ctx.arc(x, y, 12, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Highlight
-      ctx.beginPath();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.arc(x - 4, y - 4, 4, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Label background
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.beginPath();
-      ctx.roundRect(x - 38, y - 38, 76, 22, 6);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+      // Grid pattern
+      ctx.strokeStyle = 'rgba(71, 85, 105, 0.2)';
       ctx.lineWidth = 1;
+      for (let i = 0; i <= width; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, height);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= height; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(width, i);
+        ctx.stroke();
+      }
+      
+      // Roads
+      ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+      ctx.lineWidth = 6;
+      
+      // Main roads
+      ctx.beginPath();
+      ctx.moveTo(0, height * 0.3);
+      ctx.lineTo(width, height * 0.3);
       ctx.stroke();
       
-      // Label
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 11px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(vehicle.license_plate, x, y - 23);
-      
-      // Speed badge
-      ctx.fillStyle = vehicle.speed > 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(100, 116, 139, 0.15)';
       ctx.beginPath();
-      ctx.roundRect(x - 28, y + 22, 56, 20, 6);
-      ctx.fill();
+      ctx.moveTo(0, height * 0.7);
+      ctx.lineTo(width, height * 0.7);
+      ctx.stroke();
       
-      ctx.fillStyle = vehicle.speed > 0 ? '#4ade80' : '#94a3b8';
-      ctx.font = '10px Inter, sans-serif';
-      ctx.fillText(`${vehicle.speed.toFixed(0)} km/h`, x, y + 36);
-    });
+      ctx.beginPath();
+      ctx.moveTo(width * 0.3, 0);
+      ctx.lineTo(width * 0.3, height);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(width * 0.7, 0);
+      ctx.lineTo(width * 0.7, height);
+      ctx.stroke();
+      
+      // Diagonal roads
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(width, height);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(width, 0);
+      ctx.lineTo(0, height);
+      ctx.stroke();
+      
+      // Draw vehicles
+      const activeVehicles = Object.keys(trackingData).filter(id => gpsActive[id]);
+      
+      activeVehicles.forEach((id, index) => {
+        const data = trackingData[id];
+        const vehicle = vehicles.find(v => v.id === parseInt(id));
+        if (!data || !vehicle) return;
+        
+        // Calculate position on canvas
+        const x = 80 + ((data.longitude - 120.95) * 3000) % (width - 160);
+        const y = 60 + ((data.latitude - 14.55) * 3000) % (height - 120);
+        
+        const time = Date.now() / 1000;
+        
+        // Pulse rings (animated)
+        if (data.speed > 0) {
+          for (let i = 3; i >= 1; i--) {
+            const radius = 15 + i * 10 + Math.sin(time * 2 + i) * 3;
+            ctx.beginPath();
+            ctx.fillStyle = `rgba(34, 197, 94, ${0.08 / i})`;
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        
+        // Shadow
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+        ctx.ellipse(x + 2, y + 14, 10, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Outer ring
+        ctx.beginPath();
+        ctx.strokeStyle = data.speed > 0 ? 'rgba(74, 222, 128, 0.6)' : 'rgba(148, 163, 184, 0.4)';
+        ctx.lineWidth = 2.5;
+        ctx.arc(x, y, 14, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Main dot with gradient
+        const dotGrad = ctx.createRadialGradient(x - 3, y - 3, 0, x, y, 10);
+        if (data.speed > 0) {
+          dotGrad.addColorStop(0, '#86efac');
+          dotGrad.addColorStop(0.5, '#4ade80');
+          dotGrad.addColorStop(1, '#22c55e');
+        } else {
+          dotGrad.addColorStop(0, '#d1d5db');
+          dotGrad.addColorStop(0.5, '#9ca3af');
+          dotGrad.addColorStop(1, '#6b7280');
+        }
+        ctx.beginPath();
+        ctx.fillStyle = dotGrad;
+        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Highlight
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.arc(x - 3, y - 3, 3, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Label background
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(x - 32, y - 32, 64, 18, 4);
+        ctx.fill();
+        
+        // Label text
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(vehicle.plate, x, y - 19);
+        
+        // Speed badge
+        ctx.fillStyle = data.speed > 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(100, 116, 139, 0.15)';
+        ctx.beginPath();
+        ctx.roundRect(x - 22, y + 18, 44, 16, 4);
+        ctx.fill();
+        
+        ctx.fillStyle = data.speed > 0 ? '#4ade80' : '#94a3b8';
+        ctx.font = '9px Inter, sans-serif';
+        ctx.fillText(`${data.speed.toFixed(0)} km/h`, x, y + 30);
+      });
+      
+      // Compass
+      ctx.fillStyle = '#64748b';
+      ctx.font = 'bold 11px Inter';
+      ctx.textAlign = 'center';
+      ctx.fillText('N', width - 20, 20);
+      ctx.fillText('S', width - 20, height - 8);
+      ctx.fillText('E', width - 8, height / 2 + 4);
+      ctx.fillText('W', width - 35, height / 2 + 4);
+      
+      animationRef.current = requestAnimationFrame(drawMap);
+    };
     
-    // Compass
-    ctx.fillStyle = '#475569';
-    ctx.font = 'bold 14px Inter';
-    ctx.textAlign = 'center';
-    ctx.fillText('N', width - 30, 30);
-    ctx.fillText('S', width - 30, height - 15);
-    ctx.fillText('E', width - 15, height/2 + 5);
-    ctx.fillText('W', width - 50, height/2 + 5);
+    drawMap();
     
-  }, [trackingData]);
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [trackingData, gpsActive, vehicles]);
 
   const toggleGPS = (vehicleId) => {
     setGpsActive(prev => ({ ...prev, [vehicleId]: !prev[vehicleId] }));
   };
 
-  const getVehicleIcon = (type) => {
-    const icons = { car: '🚗', truck: '🚚', motorcycle: '🏍️', van: '🚐' };
-    return icons[type] || '🚗';
+  const getVehicleIcon = (type) => VEHICLE_ICONS[type] || '🚗';
+
+  const getOnlineCount = () => Object.values(gpsActive).filter(Boolean).length;
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const diff = Date.now() - timestamp;
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
+    return new Date(timestamp).toLocaleTimeString();
   };
 
+  // Not authenticated view
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-3xl p-8 md:p-12 border border-white/10 text-center max-w-md w-full">
-          <div className="w-16 h-16 md:w-20 md:h-20 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-cyan-500/30">
-            <svg className="w-8 h-8 md:w-10 md:h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl p-8 md:p-12 text-center max-w-md w-full shadow-2xl">
+          <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
             </svg>
           </div>
-          <h1 className="text-xl md:text-2xl font-bold text-white mb-2">Find My Vehicles</h1>
-          <p className="text-slate-400 mb-6 text-sm md:text-base">Sign in to track your vehicles</p>
-          <button onClick={() => router.push('/login')} className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl text-white font-semibold hover:shadow-lg hover:shadow-cyan-500/25 transition-all duration-300">
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Find My Vehicles</h1>
+          <p className="text-gray-500 mb-8">Find, lock, or track any of your vehicles. Locate your lost or stolen vehicles and manage them remotely.</p>
+          <button 
+            onClick={() => router.push('/login')}
+            className="w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors"
+          >
             Sign In
+          </button>
+          <button 
+            onClick={() => router.push('/login')}
+            className="w-full py-3 mt-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Use Remote Lock
           </button>
         </div>
       </div>
     );
   }
 
-  // Mobile Layout
+  // Mobile view
   if (isMobile) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
+      <div className="min-h-screen bg-gray-100 flex flex-col">
         {/* Mobile Header */}
-        <header className="bg-slate-800/50 backdrop-blur-xl border-b border-white/10 px-4 py-3 flex items-center justify-between">
+        <header className="bg-white shadow-sm px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
               <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
               </svg>
             </div>
-            <div>
-              <h1 className="text-white font-bold text-sm">GPS Tracker</h1>
-              <p className="text-slate-400 text-xs">{Object.values(gpsActive).filter(Boolean).length} online</p>
-            </div>
+            <span className="font-semibold text-gray-800">Find My Vehicles</span>
           </div>
-          <button onClick={() => {
-            localStorage.removeItem('rp_tracking_token');
-            router.push('/login');
-          }} className="text-slate-400 text-xs">
+          <button 
+            onClick={() => {
+              localStorage.removeItem('rp_tracking_token');
+              router.push('/login');
+            }}
+            className="text-blue-500 text-sm font-medium"
+          >
             Logout
           </button>
         </header>
 
-        {/* Mobile Tab Bar */}
-        <div className="flex bg-slate-800/30 border-b border-white/10">
-          <button 
-            onClick={() => setActiveTab('map')}
-            className={`flex-1 py-3 text-sm font-medium ${activeTab === 'map' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}
-          >
-            📍 Map
-          </button>
-          <button 
-            onClick={() => setActiveTab('vehicles')}
-            className={`flex-1 py-3 text-sm font-medium ${activeTab === 'vehicles' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}
-          >
-            🚗 Vehicles
-          </button>
-          <button 
-            onClick={() => setActiveTab('details')}
-            className={`flex-1 py-3 text-sm font-medium ${activeTab === 'details' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}
-          >
-            📊 Details
-          </button>
+        {/* Mobile Tabs */}
+        <div className="bg-white border-b flex">
+          {[
+            { id: 'devices', label: 'Devices', icon: '📍' },
+            { id: 'map', label: 'Map', icon: '🗺️' },
+            { id: 'details', label: 'Details', icon: 'ℹ️' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 py-3 text-sm font-medium ${
+                activeTab === tab.id 
+                  ? 'text-blue-500 border-b-2 border-blue-500' 
+                  : 'text-gray-500'
+              }`}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Mobile Content */}
         <div className="flex-1 overflow-hidden">
-          {activeTab === 'map' && (
-            <div className="h-full relative">
-              <canvas 
-                ref={mapRef} 
-                width={window.innerWidth} 
-                height={window.innerHeight - 140}
-                className="w-full h-full"
-              />
-              {trackingData.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <p className="text-slate-400 text-sm">Turn on GPS to track vehicles</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'vehicles' && (
+          {activeTab === 'devices' && (
             <div className="h-full overflow-y-auto p-4 space-y-3">
+              <p className="text-gray-500 text-sm mb-2">{getOnlineCount()} devices online</p>
               {vehicles.map(vehicle => {
-                const tracking = trackingData.find(t => t.id === vehicle.id);
-                const isGpsOn = gpsActive[vehicle.id];
+                const data = trackingData[vehicle.id];
+                const isOnline = gpsActive[vehicle.id];
                 
                 return (
-                  <div 
+                  <div
                     key={vehicle.id}
-                    className={`bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border transition-all ${
-                      isGpsOn ? 'border-green-500/30' : 'border-white/10'
-                    }`}
                     onClick={() => {
                       setSelectedVehicle(vehicle.id);
                       setActiveTab('details');
                     }}
+                    className={`bg-white rounded-xl p-4 shadow-sm border-l-4 ${
+                      isOnline ? 'border-l-green-500' : 'border-l-gray-300'
+                    }`}
                   >
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg ${
-                          isGpsOn ? 'bg-gradient-to-br from-green-500 to-emerald-600' : 'bg-slate-700'
-                        }`}>
-                          {getVehicleIcon(vehicle.type)}
-                        </div>
+                        <div className="text-2xl">{getVehicleIcon(vehicle.type)}</div>
                         <div>
-                          <p className="text-white font-medium">{vehicle.plate}</p>
-                          <p className="text-slate-400 text-xs">{vehicle.driver}</p>
+                          <p className="font-semibold text-gray-800">{vehicle.plate}</p>
+                          <p className="text-gray-500 text-sm">{vehicle.driver}</p>
+                          {isOnline && data && (
+                            <p className="text-green-500 text-xs mt-1">
+                              ● {data.speed.toFixed(0)} km/h • {data.battery.toFixed(0)}%
+                            </p>
+                          )}
+                          {!isOnline && (
+                            <p className="text-gray-400 text-xs mt-1">Last seen: Never</p>
+                          )}
                         </div>
                       </div>
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleGPS(vehicle.id);
                         }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
-                          isGpsOn ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'
+                        className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                          isOnline
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-600'
                         }`}
                       >
-                        {isGpsOn ? '📍 ON' : '📍 OFF'}
+                        {isOnline ? 'GPS ON' : 'GPS OFF'}
                       </button>
                     </div>
-                    {tracking && (
-                      <div className="flex gap-2 text-xs">
-                        <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 rounded">{tracking.speed.toFixed(0)} km/h</span>
-                        <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded">🔋 {tracking.battery.toFixed(0)}%</span>
-                      </div>
-                    )}
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {activeTab === 'map' && (
+            <div className="h-full relative">
+              <canvas
+                ref={mapCanvasRef}
+                width={window.innerWidth}
+                height={window.innerHeight - 140}
+                className="w-full h-full"
+              />
+              {getOnlineCount() === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50">
+                  <div className="text-center text-white">
+                    <p className="text-lg font-medium">No devices online</p>
+                    <p className="text-sm text-gray-400">Turn on GPS to track vehicles</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'details' && (
             <div className="h-full overflow-y-auto p-4">
               {selectedVehicle ? (
-                <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
-                  <div className="p-4 border-b border-white/10">
-                    <h2 className="text-white font-bold">{vehicles.find(v => v.id === selectedVehicle)?.plate}</h2>
-                    <p className="text-slate-400 text-sm">{vehicles.find(v => v.id === selectedVehicle)?.driver}</p>
-                  </div>
-                  {(() => {
-                    const t = trackingData.find(v => v.id === selectedVehicle);
-                    if (!t) {
-                      return (
-                        <div className="p-6 text-center">
-                          <p className="text-slate-400 mb-4">GPS is off</p>
-                          <button onClick={() => toggleGPS(selectedVehicle)} className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white text-sm">
-                            Turn On GPS
-                          </button>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="p-4 space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="bg-slate-700/30 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs">Speed</p>
-                            <p className="text-white font-bold text-lg">{t.speed.toFixed(1)} <span className="text-xs text-slate-400">km/h</span></p>
-                          </div>
-                          <div className="bg-slate-700/30 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs">Heading</p>
-                            <p className="text-white font-bold text-lg">{t.heading.toFixed(0)}°</p>
-                          </div>
-                          <div className="bg-slate-700/30 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs">Battery</p>
-                            <p className={`font-bold text-lg ${t.battery < 30 ? 'text-red-400' : 'text-white'}`}>{t.battery.toFixed(0)}%</p>
-                          </div>
-                          <div className="bg-slate-700/30 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs">Signal</p>
-                            <p className="text-white font-bold text-lg">{t.signal}</p>
-                          </div>
-                        </div>
-                        <div className="bg-slate-700/30 rounded-xl p-3">
-                          <p className="text-slate-400 text-xs mb-1">Location</p>
-                          <p className="text-white font-mono text-xs">{t.latitude.toFixed(6)}, {t.longitude.toFixed(6)}</p>
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <div className="p-4 border-b">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="text-3xl">{getVehicleIcon(vehicles.find(v => v.id === selectedVehicle)?.type)}</div>
+                        <div>
+                          <h2 className="font-bold text-gray-800">{vehicles.find(v => v.id === selectedVehicle)?.plate}</h2>
+                          <p className="text-gray-500 text-sm">{vehicles.find(v => v.id === selectedVehicle)?.driver}</p>
                         </div>
                       </div>
-                    );
-                  })()}
+                      <button
+                        onClick={() => toggleGPS(selectedVehicle)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                          gpsActive[selectedVehicle]
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {gpsActive[selectedVehicle] ? 'GPS ON' : 'GPS OFF'}
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {gpsActive[selectedVehicle] && trackingData[selectedVehicle] ? (
+                    <>
+                      <div className="p-4 border-b">
+                        <p className="text-green-500 font-medium flex items-center gap-2">
+                          <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                          Device is online
+                        </p>
+                        <p className="text-gray-500 text-sm mt-1">
+                          Last updated: {formatTime(trackingData[selectedVehicle].lastUpdate)}
+                        </p>
+                      </div>
+                      
+                      <div className="p-4 border-b">
+                        <h3 className="font-medium text-gray-800 mb-3">Location</h3>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Coordinates</span>
+                            <span className="text-gray-800 font-mono">
+                              {trackingData[selectedVehicle].latitude.toFixed(6)}, {trackingData[selectedVehicle].longitude.toFixed(6)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Speed</span>
+                            <span className="text-gray-800">{trackingData[selectedVehicle].speed.toFixed(1)} km/h</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Accuracy</span>
+                            <span className="text-gray-800">{trackingData[selectedVehicle].accuracy.toFixed(0)}m</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 border-b">
+                        <h3 className="font-medium text-gray-800 mb-3">Status</h3>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Battery</span>
+                            <span className={`font-medium ${trackingData[selectedVehicle].battery < 20 ? 'text-red-500' : 'text-gray-800'}`}>
+                              {trackingData[selectedVehicle].battery.toFixed(0)}%
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Network</span>
+                            <span className="text-gray-800">{trackingData[selectedVehicle].network}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Signal</span>
+                            <span className="text-gray-800">{trackingData[selectedVehicle].signal}</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4">
+                        <h3 className="font-medium text-gray-800 mb-3">Actions</h3>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button className="p-3 bg-gray-100 rounded-lg text-center hover:bg-gray-200 transition-colors">
+                            <div className="text-xl mb-1">🔊</div>
+                            <div className="text-xs text-gray-600">Sound</div>
+                          </button>
+                          <button className="p-3 bg-gray-100 rounded-lg text-center hover:bg-gray-200 transition-colors">
+                            <div className="text-xl mb-1">🔒</div>
+                            <div className="text-xs text-gray-600">Lock</div>
+                          </button>
+                          <button className="p-3 bg-red-100 rounded-lg text-center hover:bg-red-200 transition-colors">
+                            <div className="text-xl mb-1">🗑️</div>
+                            <div className="text-xs text-red-600">Erase</div>
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="p-8 text-center">
+                      <p className="text-gray-500">GPS is off</p>
+                      <button
+                        onClick={() => toggleGPS(selectedVehicle)}
+                        className="mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg font-medium"
+                      >
+                        Turn On GPS
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12">
-                  <p className="text-slate-400">Select a vehicle from the Vehicles tab</p>
+                  <p className="text-gray-500">Select a device from the Devices tab</p>
                 </div>
               )}
             </div>
@@ -431,194 +556,216 @@ export default function LiveTracking() {
     );
   }
 
-  // Desktop Layout
+  // Desktop view
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      {/* Header */}
-      <header className="bg-slate-800/30 backdrop-blur-xl border-b border-white/10">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      {/* Desktop Header */}
+      <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-cyan-500/30">
+            <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">Live Tracking</h1>
-              <p className="text-slate-400 text-sm">{Object.values(gpsActive).filter(Boolean).length} vehicles online</p>
+              <h1 className="text-xl font-semibold text-gray-800">Find My Vehicles</h1>
+              <p className="text-gray-500 text-sm">{getOnlineCount()} devices online</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="px-4 py-2 bg-slate-700/50 rounded-lg border border-white/10">
-              <span className="text-slate-400 text-sm">API: </span>
-              <span className="text-cyan-400 font-mono text-sm">{apiKey.substring(0, 15)}...</span>
-            </div>
-            <button onClick={() => {
-              localStorage.removeItem('rp_tracking_token');
-              router.push('/login');
-            }} className="px-4 py-2 bg-white/10 rounded-lg text-white text-sm hover:bg-white/20 transition-colors border border-white/10">
+            <span className="text-gray-500 text-sm">API: {apiKey.substring(0, 12)}...</span>
+            <button
+              onClick={() => {
+                localStorage.removeItem('rp_tracking_token');
+                router.push('/login');
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+            >
               Sign Out
             </button>
           </div>
         </div>
       </header>
 
-      {/* Desktop Grid */}
-      <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
-        {/* Vehicle List */}
-        <div className="col-span-3">
-          <div className="bg-slate-800/30 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
-            <div className="p-4 border-b border-white/10">
-              <h2 className="text-white font-semibold">Your Vehicles</h2>
-            </div>
-            <div className="divide-y divide-white/5 max-h-[600px] overflow-y-auto">
-              {vehicles.map(vehicle => {
-                const tracking = trackingData.find(t => t.id === vehicle.id);
-                const isGpsOn = gpsActive[vehicle.id];
-                
-                return (
-                  <div 
-                    key={vehicle.id}
-                    className={`p-4 cursor-pointer transition-all duration-200 hover:bg-white/5 ${
-                      selectedVehicle === vehicle.id ? 'bg-white/10 border-l-2 border-cyan-400' : ''
-                    }`}
-                    onClick={() => setSelectedVehicle(vehicle.id)}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
-                          isGpsOn ? 'bg-gradient-to-br from-green-500 to-emerald-600' : 'bg-slate-700'
-                        }`}>
-                          {getVehicleIcon(vehicle.type)}
-                        </div>
-                        <div>
-                          <p className="text-white font-medium">{vehicle.plate}</p>
-                          <p className="text-slate-400 text-sm">{vehicle.driver}</p>
-                        </div>
+      {/* Desktop Content */}
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 flex gap-6">
+        {/* Device List */}
+        <div className="w-80 bg-white rounded-xl shadow-sm overflow-hidden flex flex-col">
+          <div className="p-4 border-b">
+            <h2 className="font-semibold text-gray-800">Devices</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto divide-y">
+            {vehicles.map(vehicle => {
+              const data = trackingData[vehicle.id];
+              const isOnline = gpsActive[vehicle.id];
+              const isSelected = selectedVehicle === vehicle.id;
+              
+              return (
+                <div
+                  key={vehicle.id}
+                  onClick={() => setSelectedVehicle(vehicle.id)}
+                  className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${
+                    isSelected ? 'bg-blue-50' : ''
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        isOnline ? 'bg-green-100' : 'bg-gray-100'
+                      }`}>
+                        <span className="text-lg">{getVehicleIcon(vehicle.type)}</span>
                       </div>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleGPS(vehicle.id);
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
-                          isGpsOn 
-                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' 
-                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                        }`}
-                      >
-                        {isGpsOn ? '📍 ON' : '📍 OFF'}
-                      </button>
+                      <div>
+                        <p className="font-medium text-gray-800">{vehicle.plate}</p>
+                        <p className="text-gray-500 text-xs">{vehicle.driver}</p>
+                        {isOnline && data ? (
+                          <p className="text-green-500 text-xs">
+                            {data.speed.toFixed(0)} km/h • {data.battery.toFixed(0)}%
+                          </p>
+                        ) : (
+                          <p className="text-gray-400 text-xs">Offline</p>
+                        )}
+                      </div>
                     </div>
-                    {tracking && (
-                      <div className="flex gap-2 text-xs">
-                        <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 rounded">
-                          {tracking.speed.toFixed(0)} km/h
-                        </span>
-                        <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded">
-                          🔋 {tracking.battery.toFixed(0)}%
-                        </span>
-                        <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded">
-                          {tracking.signal}
-                        </span>
-                      </div>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleGPS(vehicle.id);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+                        isOnline
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {isOnline ? 'GPS ON' : 'GPS OFF'}
+                    </button>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* Map */}
-        <div className="col-span-6">
-          <div className="bg-slate-800/30 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                <span className="text-white font-semibold">Live Map</span>
-              </div>
+        <div className="flex-1 bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              <span className="font-medium text-gray-800">Live Map</span>
             </div>
-            <div className="relative">
-              <canvas 
-                ref={mapRef} 
-                width={800} 
-                height={600}
-                className="w-full h-auto"
-              />
-              {trackingData.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <p className="text-slate-400">Turn on GPS to see vehicles</p>
+          </div>
+          <div className="relative">
+            <canvas
+              ref={mapCanvasRef}
+              width={800}
+              height={500}
+              className="w-full h-auto"
+            />
+            {getOnlineCount() === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-gray-500 font-medium">No devices online</p>
+                  <p className="text-gray-400 text-sm">Turn on GPS to track vehicles</p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Details */}
-        <div className="col-span-3">
+        {/* Details Panel */}
+        <div className="w-80 bg-white rounded-xl shadow-sm overflow-hidden flex flex-col">
           {selectedVehicle ? (
-            <div className="bg-slate-800/30 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
-              <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                <h2 className="text-white font-semibold">
-                  {vehicles.find(v => v.id === selectedVehicle)?.plate}
-                </h2>
-                <button onClick={() => setSelectedVehicle(null)} className="text-slate-400 hover:text-white">×</button>
+            <>
+              <div className="p-4 border-b flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{getVehicleIcon(vehicles.find(v => v.id === selectedVehicle)?.type)}</span>
+                  <div>
+                    <h2 className="font-semibold text-gray-800">{vehicles.find(v => v.id === selectedVehicle)?.plate}</h2>
+                    <p className="text-gray-500 text-sm">{vehicles.find(v => v.id === selectedVehicle)?.driver}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedVehicle(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
               </div>
-              {(() => {
-                const t = trackingData.find(v => v.id === selectedVehicle);
-                if (!t) {
-                  return (
-                    <div className="p-6 text-center">
-                      <p className="text-slate-400 mb-4">GPS is off</p>
-                      <button onClick={() => toggleGPS(selectedVehicle)} className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg text-white text-sm">
-                        Turn On GPS
-                      </button>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="p-4 space-y-4">
-                    <div className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-block ${
-                      gpsActive[selectedVehicle] ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-400'
-                    }`}>
-                      {gpsActive[selectedVehicle] ? '● LIVE' : '○ OFFLINE'}
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-700/30 rounded-xl p-3">
-                        <p className="text-slate-400 text-xs mb-1">Speed</p>
-                        <p className="text-white font-bold text-lg">{t.speed.toFixed(1)}</p>
-                        <p className="text-slate-500 text-xs">km/h</p>
+              
+              {gpsActive[selectedVehicle] && trackingData[selectedVehicle] ? (
+                <div className="flex-1 overflow-y-auto">
+                  <div className="p-4 border-b">
+                    <p className="text-green-500 font-medium flex items-center gap-2">
+                      <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                      Online
+                    </p>
+                    <p className="text-gray-400 text-sm">{formatTime(trackingData[selectedVehicle].lastUpdate)}</p>
+                  </div>
+                  
+                  <div className="p-4 border-b">
+                    <h3 className="font-medium text-gray-800 mb-2">Location</h3>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Speed</span>
+                        <span className="text-gray-800">{trackingData[selectedVehicle].speed.toFixed(1)} km/h</span>
                       </div>
-                      <div className="bg-slate-700/30 rounded-xl p-3">
-                        <p className="text-slate-400 text-xs mb-1">Heading</p>
-                        <p className="text-white font-bold text-lg">{t.heading.toFixed(0)}°</p>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Accuracy</span>
+                        <span className="text-gray-800">{trackingData[selectedVehicle].accuracy.toFixed(0)}m</span>
                       </div>
-                      <div className="bg-slate-700/30 rounded-xl p-3">
-                        <p className="text-slate-400 text-xs mb-1">Battery</p>
-                        <p className={`font-bold text-lg ${t.battery < 30 ? 'text-red-400' : 'text-white'}`}>{t.battery.toFixed(0)}%</p>
-                      </div>
-                      <div className="bg-slate-700/30 rounded-xl p-3">
-                        <p className="text-slate-400 text-xs mb-1">Signal</p>
-                        <p className="text-white font-bold text-lg">{t.signal}</p>
-                        <p className="text-slate-500 text-xs">{t.network}</p>
-                      </div>
-                    </div>
-                    <div className="bg-slate-700/30 rounded-xl p-3">
-                      <p className="text-slate-400 text-xs mb-1">Location</p>
-                      <p className="text-white font-mono text-sm">{t.latitude.toFixed(6)}, {t.longitude.toFixed(6)}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button className="flex-1 py-2 bg-slate-700/50 rounded-lg text-white text-sm hover:bg-slate-600 transition-colors">🔊 Sound</button>
-                      <button className="flex-1 py-2 bg-slate-700/50 rounded-lg text-white text-sm hover:bg-slate-600 transition-colors">🔒 Lock</button>
                     </div>
                   </div>
-                );
-              })()}
-            </div>
+                  
+                  <div className="p-4 border-b">
+                    <h3 className="font-medium text-gray-800 mb-2">Status</h3>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Battery</span>
+                        <span className={trackingData[selectedVehicle].battery < 20 ? 'text-red-500' : 'text-gray-800'}>
+                          {trackingData[selectedVehicle].battery.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Signal</span>
+                        <span className="text-gray-800">{trackingData[selectedVehicle].signal}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-4">
+                    <h3 className="font-medium text-gray-800 mb-2">Actions</h3>
+                    <div className="space-y-2">
+                      <button className="w-full py-2 bg-gray-100 rounded-lg text-gray-700 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2">
+                        <span>🔊</span> Play Sound
+                      </button>
+                      <button className="w-full py-2 bg-gray-100 rounded-lg text-gray-700 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2">
+                        <span>🔒</span> Lock
+                      </button>
+                      <button className="w-full py-2 bg-red-100 rounded-lg text-red-600 hover:bg-red-200 transition-colors flex items-center justify-center gap-2">
+                        <span>🗑️</span> Erase
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center p-6">
+                  <div className="text-center">
+                    <p className="text-gray-500 mb-4">GPS is off</p>
+                    <button
+                      onClick={() => toggleGPS(selectedVehicle)}
+                      className="px-6 py-2 bg-blue-500 text-white rounded-lg font-medium"
+                    >
+                      Turn On GPS
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="bg-slate-800/30 backdrop-blur-xl rounded-2xl border border-white/10 p-6 text-center">
-              <p className="text-slate-400 text-sm">Select a vehicle to view details</p>
+            <div className="flex-1 flex items-center justify-center p-6">
+              <p className="text-gray-400">Select a device to view details</p>
             </div>
           )}
         </div>
