@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.next/
+
+# Environment
+.env
+.env*.local
+.env.local
+
+# Build artifacts
+build/
+dist/
+
+# C++ artifacts
+*.o
+*.exe
+*.out
+*.dll
+*.a
+*.so
+*.dylib
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+InstallationLog.txt
+
+# Temp files
+nul
+mingw.7z
+
+# Google Cloud
+.gcloud/
+
+# Vercel
+.vercel/
