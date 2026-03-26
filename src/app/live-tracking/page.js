@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import './globals.css';
+import '../globals.css';
 
 export default function LiveTracking() {
   const router = useRouter();
