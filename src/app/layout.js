@@ -13,6 +13,7 @@ export default function RootLayout({ children }) {
           <div className="nav-brand">RP Motor Tracking</div>
           <div className="nav-links">
             <a href="/">Dashboard</a>
+            <a href="/live-tracking">Live Tracking</a>
             <a href="/vehicles">Vehicles</a>
             <a href="/admin">Admin</a>
           </div>
